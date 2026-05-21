@@ -5,7 +5,7 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  const { submitter, cid, customerName, description, productType, odLink, slackLink, devtoolLink } = req.body;
+  const { submitter, cid, customerName, description, productType, odLink, devtoolLink } = req.body;
 
   if (!submitter?.trim()) return res.status(400).json({ error: 'Your Flex email is required.' });
   if (!/^[A-Za-z0-9]{28}$/.test(cid)) return res.status(400).json({ error: 'Invalid CID format.' });
@@ -34,14 +34,15 @@ export default async function handler(req, res) {
   const productTypeId = PRODUCT_TYPE_IDS[productType];
   if (!productTypeId) return res.status(400).json({ error: 'Invalid product type.' });
 
-  const JIRA_EMAIL    = process.env.JIRA_EMAIL;
-  const JIRA_TOKEN    = process.env.JIRA_API_TOKEN;
-  const JIRA_BASE     = 'https://getflex.atlassian.net';
-  const SLACK_WEBHOOK = process.env.OPS_SLACK_WEBHOOK_URL;
+  const JIRA_EMAIL          = process.env.JIRA_EMAIL;
+  const JIRA_TOKEN          = process.env.JIRA_API_TOKEN;
+  const JIRA_BASE           = 'https://getflex.atlassian.net';
+  const SLACK_BOT_TOKEN     = process.env.SLACK_BOT_TOKEN;
+  const OPS_SLACK_CHANNEL   = process.env.OPS_SLACK_CHANNEL_ID;
   const auth    = Buffer.from(`${JIRA_EMAIL}:${JIRA_TOKEN}`).toString('base64');
   const headers = { 'Authorization': `Basic ${auth}`, 'Content-Type': 'application/json', 'Accept': 'application/json' };
 
-  // Look up submitter display name
+  // Look up submitter display name + account ID
   let submitterName = submitter.trim();
   let submitterAccountId = null;
   try {
@@ -61,7 +62,6 @@ export default async function handler(req, res) {
     const sprintData = await sprintRes.json();
     const activeSprint = sprintData.values?.[0];
     if (activeSprint?.id) sprintId = activeSprint.id;
-    console.log('Active sprint:', activeSprint?.name, '→ id', sprintId);
   } catch (e) {
     console.warn('Sprint lookup failed:', e.message);
   }
@@ -85,13 +85,10 @@ export default async function handler(req, res) {
     summary,
     description:       descriptionDoc,
     customfield_11965: { id: productTypeId },
-    ...(sprintId ? { customfield_10020: sprintId } : {}),
+    ...(sprintId    ? { customfield_10020: sprintId }     : {}),
     ...(odLink?.trim()      ? { customfield_11966: odLink.trim() }      : {}),
-    ...(slackLink?.trim()   ? { customfield_11967: slackLink.trim() }   : {}),
     ...(devtoolLink?.trim() ? { customfield_11968: devtoolLink.trim() } : {}),
   };
-
-  console.log('FIELDS:', JSON.stringify(fields));
 
   const createRes = await fetch(`${JIRA_BASE}/rest/api/3/issue`, {
     method: 'POST', headers, body: JSON.stringify({ fields })
@@ -100,7 +97,7 @@ export default async function handler(req, res) {
   if (!createRes.ok) {
     const err = await createRes.text();
     console.error('Jira create failed:', err);
-    return res.status(500).json({ error: 'Failed to create Jira ticket. Check logs for details.' });
+    return res.status(500).json({ error: 'Failed to create Jira ticket.' });
   }
 
   const { key: ticketKey } = await createRes.json();
@@ -118,29 +115,47 @@ export default async function handler(req, res) {
     }
   }
 
-  // Post to #cs-ops-escalations
-  if (SLACK_WEBHOOK) {
+  // Post to Slack via chat.postMessage (so we get the ts for threading)
+  if (SLACK_BOT_TOKEN && OPS_SLACK_CHANNEL) {
     let slackTag = submitterName;
-    const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN;
-    if (SLACK_BOT_TOKEN) {
-      try {
-        const slackRes  = await fetch(`https://slack.com/api/users.lookupByEmail?email=${encodeURIComponent(submitter.trim())}`, {
-          headers: { 'Authorization': `Bearer ${SLACK_BOT_TOKEN}` }
-        });
-        const slackData = await slackRes.json();
-        if (slackData.ok && slackData.user?.id) slackTag = `<@${slackData.user.id}>`;
-      } catch (e) {
-        console.warn('Slack user lookup failed:', e.message);
-      }
+    try {
+      const slackUserRes  = await fetch(`https://slack.com/api/users.lookupByEmail?email=${encodeURIComponent(submitter.trim())}`, {
+        headers: { 'Authorization': `Bearer ${SLACK_BOT_TOKEN}` }
+      });
+      const slackUserData = await slackUserRes.json();
+      if (slackUserData.ok && slackUserData.user?.id) slackTag = `<@${slackUserData.user.id}>`;
+    } catch (e) {
+      console.warn('Slack user lookup failed:', e.message);
     }
 
     const excerpt = description.length > 200 ? description.slice(0, 200) + '…' : description;
-    await fetch(SLACK_WEBHOOK, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+
+    const msgRes  = await fetch('https://slack.com/api/chat.postMessage', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${SLACK_BOT_TOKEN}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        channel: OPS_SLACK_CHANNEL,
         text: `🔺 *New Payment Ops Escalation submitted*\n\n*Submitted by:* ${slackTag}\n*CID:* ${cid}\n*Customer:* ${customerName.trim()}\n*Product Type:* ${productType}\n\n*Escalation:* "${excerpt}"\n\nJira: ${ticketUrl}`
       })
     });
+
+    const msgData = await msgRes.json();
+    console.log('Slack postMessage:', msgData.ok, msgData.error || '');
+
+    // Store the Slack thread URL in Jira so comment.js can thread replies
+    if (msgData.ok && msgData.ts) {
+      const tsCompact      = msgData.ts.replace('.', '');
+      const slackThreadUrl = `https://getflex-hq.slack.com/archives/${msgData.channel}/p${tsCompact}`;
+      try {
+        await fetch(`${JIRA_BASE}/rest/api/3/issue/${ticketKey}`, {
+          method: 'PUT', headers,
+          body: JSON.stringify({ fields: { customfield_11967: slackThreadUrl } })
+        });
+        console.log('Stored Slack thread URL:', slackThreadUrl);
+      } catch (e) {
+        console.warn('Failed to store Slack thread URL:', e.message);
+      }
+    }
   }
 
   return res.status(200).json({ success: true, ticketKey, ticketUrl });
