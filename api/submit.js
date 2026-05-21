@@ -85,7 +85,7 @@ export default async function handler(req, res) {
     summary,
     description:       descriptionDoc,
     customfield_11965: { id: productTypeId },
-    ...(sprintId ? { customfield_10020: { id: sprintId } } : {}),
+    ...(sprintId ? { customfield_10020: sprintId } : {}),
     ...(odLink?.trim()      ? { customfield_11966: odLink.trim() }      : {}),
     ...(slackLink?.trim()   ? { customfield_11967: slackLink.trim() }   : {}),
     ...(devtoolLink?.trim() ? { customfield_11968: devtoolLink.trim() } : {}),
