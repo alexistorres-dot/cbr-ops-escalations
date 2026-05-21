@@ -5,7 +5,7 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  const { ticketKey, comment, author } = req.body;
+  const { ticketKey, comment, author, authorEmail } = req.body;
   if (!ticketKey || !comment) return res.status(400).json({ error: 'ticketKey and comment required' });
 
   const JIRA_EMAIL      = process.env.JIRA_EMAIL;
@@ -15,8 +15,8 @@ export default async function handler(req, res) {
   const auth    = Buffer.from(`${JIRA_EMAIL}:${JIRA_TOKEN}`).toString('base64');
   const headers = { 'Authorization': `Basic ${auth}`, 'Content-Type': 'application/json', 'Accept': 'application/json' };
 
-  // Get the stored Slack thread URL from the Jira ticket
-  const issueRes = await fetch(`${JIRA_BASE}/rest/api/3/issue/${ticketKey}?fields=customfield_11967`, { headers });
+  // Get the stored Slack thread URL + reporter email from the Jira ticket
+  const issueRes = await fetch(`${JIRA_BASE}/rest/api/3/issue/${ticketKey}?fields=customfield_11967,reporter`, { headers });
   const issue    = await issueRes.json();
   const slackUrl = issue.fields?.customfield_11967;
 
@@ -26,7 +26,6 @@ export default async function handler(req, res) {
   }
 
   // Parse channel ID and ts from Slack URL
-  // Format: https://workspace.slack.com/archives/CHANNELID/p1234567890123456
   const match = slackUrl.match(/archives\/([A-Z0-9]+)\/p(\d+)/);
   if (!match) {
     console.warn('Could not parse Slack URL:', slackUrl);
@@ -37,15 +36,43 @@ export default async function handler(req, res) {
   const tsRaw     = match[2];
   const thread_ts = tsRaw.slice(0, -6) + '.' + tsRaw.slice(-6);
 
-  // Post as a thread reply under the original submission message
+  // Look up Slack ID for the commenter
+  let commenterTag = author || 'Someone';
+  if (authorEmail && SLACK_BOT_TOKEN) {
+    try {
+      const r    = await fetch(`https://slack.com/api/users.lookupByEmail?email=${encodeURIComponent(authorEmail)}`, {
+        headers: { 'Authorization': `Bearer ${SLACK_BOT_TOKEN}` }
+      });
+      const data = await r.json();
+      if (data.ok && data.user?.id) commenterTag = `<@${data.user.id}>`;
+    } catch (e) {
+      console.warn('Commenter Slack lookup failed:', e.message);
+    }
+  }
+
+  // Look up Slack ID for the original submitter (reporter)
+  let submitterTag = issue.fields?.reporter?.displayName || '';
+  const reporterEmail = issue.fields?.reporter?.emailAddress;
+  if (reporterEmail && SLACK_BOT_TOKEN) {
+    try {
+      const r    = await fetch(`https://slack.com/api/users.lookupByEmail?email=${encodeURIComponent(reporterEmail)}`, {
+        headers: { 'Authorization': `Bearer ${SLACK_BOT_TOKEN}` }
+      });
+      const data = await r.json();
+      if (data.ok && data.user?.id) submitterTag = `<@${data.user.id}>`;
+    } catch (e) {
+      console.warn('Submitter Slack lookup failed:', e.message);
+    }
+  }
+
+  const text = submitterTag
+    ? `💬 ${commenterTag} commented on *${ticketKey}* (submitted by ${submitterTag}):\n${comment}`
+    : `💬 ${commenterTag} commented on *${ticketKey}*:\n${comment}`;
+
   const msgRes  = await fetch('https://slack.com/api/chat.postMessage', {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${SLACK_BOT_TOKEN}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      channel,
-      thread_ts,
-      text: `💬 *${author || 'Someone'}* commented on *${ticketKey}*:\n${comment}`
-    })
+    body: JSON.stringify({ channel, thread_ts, text })
   });
 
   const msgData = await msgRes.json();
