@@ -91,9 +91,23 @@ export default async function handler(req, res) {
   if (event.files?.length) {
     for (const file of event.files) {
       try {
-        const fileRes = await fetch(file.url_private_download, {
-          headers: { 'Authorization': `Bearer ${SLACK_BOT_TOKEN}` }
+        // Fetch with redirect:manual — Node strips auth header on cross-origin redirect
+        const initRes = await fetch(file.url_private_download, {
+          headers: { 'Authorization': `Bearer ${SLACK_BOT_TOKEN}` },
+          redirect: 'manual'
         });
+        let fileRes;
+        if (initRes.status >= 300 && initRes.status < 400) {
+          const location = initRes.headers.get('location');
+          fileRes = await fetch(location);
+        } else {
+          fileRes = initRes;
+        }
+        const contentType = fileRes.headers.get('content-type') || '';
+        if (contentType.includes('text/html')) {
+          console.warn('File download returned HTML — bot may be missing files:read scope:', file.name);
+          continue;
+        }
         const buffer = await fileRes.arrayBuffer();
         const blob   = new Blob([buffer], { type: file.mimetype });
         const form   = new FormData();
