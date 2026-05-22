@@ -129,28 +129,19 @@ async function lookupSlackTag(email, token) {
 }
 
 async function uploadFileToSlack(fileBuffer, filename, mimeType, channel, thread_ts, token) {
-  const buf    = Buffer.from(fileBuffer);
-  const length = buf.length;
-  const urlRes = await fetch('https://slack.com/api/files.getUploadURLExternal', {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ filename, length })
-  });
-  const urlData = await urlRes.json();
-  if (!urlData.ok) throw new Error(`getUploadURLExternal: ${urlData.error}`);
-
+  const buf  = Buffer.from(fileBuffer);
   const form = new FormData();
-  form.append('filename', new Blob([buf], { type: mimeType || 'application/octet-stream' }), filename);
-  const uploadRes = await fetch(urlData.upload_url, { method: 'POST', body: form });
-  console.log('CDN upload status:', uploadRes.status);
-
-  const completeRes = await fetch('https://slack.com/api/files.completeUploadExternal', {
+  form.append('file', new Blob([buf], { type: mimeType || 'application/octet-stream' }), filename);
+  form.append('filename', filename);
+  form.append('channels', channel);
+  form.append('thread_ts', thread_ts);
+  const res  = await fetch('https://slack.com/api/files.upload', {
     method: 'POST',
-    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ files: [{ id: urlData.file_id }], channel_id: channel, thread_ts })
+    headers: { 'Authorization': `Bearer ${token}` },
+    body: form
   });
-  const completeData = await completeRes.json();
-  console.log('completeUploadExternal:', completeData.ok, completeData.error || '');
-  if (!completeData.ok) throw new Error(`completeUploadExternal: ${completeData.error}`);
-  return urlData.file_id;
+  const data = await res.json();
+  console.log('files.upload:', data.ok, data.error || '', filename);
+  if (!data.ok) throw new Error(`files.upload: ${data.error}`);
+  return data.file?.id;
 }
