@@ -9,8 +9,9 @@ export default async function handler(req, res) {
   const event = req.body?.event;
   if (!event || event.type !== 'message') return res.status(200).end();
 
-  // Skip bot messages (prevents loop when comment.js posts back to Slack)
-  if (event.bot_id || event.subtype) return res.status(200).end();
+  // Skip bot messages and non-file subtypes (file_share is allowed)
+  if (event.bot_id) return res.status(200).end();
+  if (event.subtype && event.subtype !== 'file_share') return res.status(200).end();
 
   // Only process thread replies, not parent messages
   if (!event.thread_ts || event.ts === event.thread_ts) return res.status(200).end();
@@ -85,5 +86,29 @@ export default async function handler(req, res) {
   });
 
   console.log('Jira comment posted:', commentRes.status, ticketKey, authorName);
+
+  // Upload any files attached to the Slack message to Jira
+  if (event.files?.length) {
+    for (const file of event.files) {
+      try {
+        const fileRes = await fetch(file.url_private_download, {
+          headers: { 'Authorization': `Bearer ${SLACK_BOT_TOKEN}` }
+        });
+        const buffer = await fileRes.arrayBuffer();
+        const blob   = new Blob([buffer], { type: file.mimetype });
+        const form   = new FormData();
+        form.append('file', blob, file.name);
+        await fetch(`${JIRA_BASE}/rest/api/3/issue/${ticketKey}/attachments`, {
+          method: 'POST',
+          headers: { 'Authorization': `Basic ${auth}`, 'X-Atlassian-Token': 'no-check' },
+          body: form
+        });
+        console.log('Uploaded Slack file to Jira:', file.name, ticketKey);
+      } catch (e) {
+        console.warn('Failed to upload Slack file to Jira:', e.message, file.name);
+      }
+    }
+  }
+
   return res.status(200).end();
 }
