@@ -129,19 +129,34 @@ async function lookupSlackTag(email, token) {
 }
 
 async function uploadFileToSlack(fileBuffer, filename, mimeType, channel, thread_ts, token) {
-  const buf  = Buffer.from(fileBuffer);
-  const form = new FormData();
-  form.append('file', new Blob([buf], { type: mimeType || 'application/octet-stream' }), filename);
-  form.append('filename', filename);
-  form.append('channels', channel);
-  form.append('thread_ts', thread_ts);
-  const res  = await fetch('https://slack.com/api/files.upload', {
+  const buf = Buffer.from(fileBuffer);
+
+  // Step 1: get upload URL (form-encoded, not JSON)
+  const urlRes  = await fetch('https://slack.com/api/files.getUploadURLExternal', {
     method: 'POST',
-    headers: { 'Authorization': `Bearer ${token}` },
-    body: form
+    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: `filename=${encodeURIComponent(filename)}&length=${buf.length}`
   });
-  const data = await res.json();
-  console.log('files.upload:', data.ok, data.error || '', filename);
-  if (!data.ok) throw new Error(`files.upload: ${data.error}`);
-  return data.file?.id;
+  const urlData = await urlRes.json();
+  console.log('getUploadURLExternal:', urlData.ok, urlData.error || '', buf.length);
+  if (!urlData.ok) throw new Error(`getUploadURLExternal: ${urlData.error}`);
+
+  // Step 2: upload raw binary to CDN URL
+  const uploadRes = await fetch(urlData.upload_url, {
+    method: 'POST',
+    headers: { 'Content-Type': mimeType || 'application/octet-stream' },
+    body: buf
+  });
+  console.log('CDN upload status:', uploadRes.status);
+
+  // Step 3: complete upload and post to thread
+  const completeRes  = await fetch('https://slack.com/api/files.completeUploadExternal', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ files: [{ id: urlData.file_id }], channel_id: channel, thread_ts })
+  });
+  const completeData = await completeRes.json();
+  console.log('completeUploadExternal:', completeData.ok, completeData.error || '');
+  if (!completeData.ok) throw new Error(`completeUploadExternal: ${completeData.error}`);
+  return urlData.file_id;
 }
