@@ -22,26 +22,27 @@ export default async function handler(req, res) {
   const auth    = Buffer.from(`${JIRA_EMAIL}:${JIRA_TOKEN}`).toString('base64');
   const headers = { 'Authorization': `Basic ${auth}`, 'Content-Type': 'application/json', 'Accept': 'application/json' };
 
-  // Build the Slack thread URL to find the matching Jira ticket
-  const tsCompact = event.thread_ts.replace('.', '');
-  const jql       = `project = CBR AND cf[11967] ~ "${tsCompact}" ORDER BY created DESC`;
-  console.log('JQL:', jql);
+  // Fetch the parent Slack message and extract the Jira ticket key from it
+  let ticketKey = null;
+  try {
+    const histRes  = await fetch(`https://slack.com/api/conversations.history?channel=${event.channel}&latest=${event.thread_ts}&limit=1&inclusive=true`, {
+      headers: { 'Authorization': `Bearer ${SLACK_BOT_TOKEN}` }
+    });
+    const histData = await histRes.json();
+    const parentMsg = histData.messages?.[0];
+    console.log('Parent message:', parentMsg?.text?.slice(0, 200));
+    const match = parentMsg?.text?.match(/browse\/(CBR-\d+)/);
+    if (match) ticketKey = match[1];
+  } catch (e) {
+    console.warn('Failed to fetch parent message:', e.message);
+  }
 
-  const searchRes  = await fetch(`${JIRA_BASE}/rest/api/3/issue/search`, {
-    method: 'POST', headers,
-    body: JSON.stringify({ jql, fields: ['summary'], maxResults: 1 })
-  });
-  const searchText = await searchRes.text();
-  console.log('Search response:', searchRes.status, searchText.slice(0, 500));
-  const searchData = JSON.parse(searchText);
-  const issue      = searchData.issues?.[0];
-
-  if (!issue) {
-    console.log('No Jira ticket found for thread ts:', tsCompact);
+  if (!ticketKey) {
+    console.log('No Jira ticket key found in parent message');
     return res.status(200).end();
   }
 
-  const ticketKey = issue.key;
+  console.log('Found ticket:', ticketKey);
 
   // Get the Slack user's name
   let authorName = 'Someone';
