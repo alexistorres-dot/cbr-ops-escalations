@@ -5,7 +5,7 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  const { submitter, cid, customerName, description, productType, odLink, devtoolLink } = req.body;
+  const { submitter, cid, customerName, description, productType, odLink, devtoolLink, attachment } = req.body;
 
   if (!submitter?.trim()) return res.status(400).json({ error: 'Your Flex email is required.' });
   if (!/^[A-Za-z0-9]{28}$/.test(cid)) return res.status(400).json({ error: 'Invalid CID format.' });
@@ -155,6 +155,24 @@ export default async function handler(req, res) {
       } catch (e) {
         console.warn('Failed to store Slack thread URL:', e.message);
       }
+    }
+  }
+
+  // Upload attachment to Jira if provided
+  if (attachment?.data) {
+    try {
+      const buffer = Buffer.from(attachment.data, 'base64');
+      const blob   = new Blob([buffer], { type: attachment.type });
+      const form   = new FormData();
+      form.append('file', blob, attachment.name);
+      await fetch(`${JIRA_BASE}/rest/api/3/issue/${ticketKey}/attachments`, {
+        method: 'POST',
+        headers: { 'Authorization': `Basic ${auth}`, 'X-Atlassian-Token': 'no-check', 'Accept': 'application/json' },
+        body: form
+      });
+      console.log('Attachment uploaded:', attachment.name);
+    } catch (e) {
+      console.warn('Attachment upload failed:', e.message);
     }
   }
 

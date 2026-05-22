@@ -185,6 +185,12 @@
           </div>
         </div>
 
+        <div class="field">
+          <label for="attachment">Attachment <span class="hint">— optional screenshot or document</span></label>
+          <input type="file" id="attachment" accept="image/*,.pdf" style="padding:8px 14px; cursor:pointer;" />
+          <div style="font-size:12px; color:#aaa; margin-top:4px;">Max 10MB. Images or PDF.</div>
+        </div>
+
         <button type="submit" class="submit-btn" id="submit-btn" disabled>
           <span class="spinner" id="spinner"></span>
           <span id="btn-label">Submit Escalation</span>
@@ -262,6 +268,15 @@
     descriptionInput.addEventListener('input', checkReady);
     productTypeSelect.addEventListener('change', checkReady);
 
+    function fileToBase64(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload  = () => resolve(reader.result.split(',')[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+    }
+
     document.getElementById('her-form').addEventListener('submit', async (e) => {
       e.preventDefault();
       errorMsg.classList.remove('visible');
@@ -270,6 +285,13 @@
       submitBtn.disabled = true;
 
       try {
+        const fileInput = document.getElementById('attachment');
+        let attachment  = null;
+        if (fileInput.files[0]) {
+          const file = fileInput.files[0];
+          attachment = { name: file.name, type: file.type, data: await fileToBase64(file) };
+        }
+
         const res = await fetch('/api/submit', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -282,6 +304,7 @@
             odLink:       document.getElementById('odLink').value.trim(),
             slackLink:    document.getElementById('slackLink').value.trim(),
             devtoolLink:  document.getElementById('devtoolLink').value.trim(),
+            attachment
           })
         });
 
