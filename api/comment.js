@@ -9,6 +9,9 @@ export default async function handler(req, res) {
   if (!ticketKey) return res.status(400).json({ error: 'ticketKey required' });
   const commentText = typeof comment === 'string' ? comment : JSON.stringify(comment);
 
+  // Skip comments that originated from Slack (posted by slack-event.js) to prevent loops
+  if (commentText.startsWith('[via Slack]')) return res.status(200).json({ ok: true, skipped: 'slack-sourced' });
+
   const JIRA_EMAIL      = process.env.JIRA_EMAIL;
   const JIRA_TOKEN      = process.env.JIRA_API_TOKEN;
   const JIRA_BASE       = 'https://getflex.atlassian.net';
