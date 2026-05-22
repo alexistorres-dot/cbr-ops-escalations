@@ -6,7 +6,8 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   const { ticketKey, comment, author, authorEmail } = req.body;
-  if (!ticketKey || !comment) return res.status(400).json({ error: 'ticketKey and comment required' });
+  if (!ticketKey) return res.status(400).json({ error: 'ticketKey required' });
+  const commentText = typeof comment === 'string' ? comment : JSON.stringify(comment);
 
   const JIRA_EMAIL      = process.env.JIRA_EMAIL;
   const JIRA_TOKEN      = process.env.JIRA_API_TOKEN;
@@ -66,8 +67,8 @@ export default async function handler(req, res) {
   }
 
   const text = submitterTag
-    ? `💬 ${commenterTag} commented on *${ticketKey}* (submitted by ${submitterTag}):\n${comment}`
-    : `💬 ${commenterTag} commented on *${ticketKey}*:\n${comment}`;
+    ? `💬 ${commenterTag} commented on *${ticketKey}* (submitted by ${submitterTag}):\n${commentText}`
+    : `💬 ${commenterTag} commented on *${ticketKey}*:\n${commentText}`;
 
   const msgRes  = await fetch('https://slack.com/api/chat.postMessage', {
     method: 'POST',
