@@ -31,7 +31,7 @@ export default async function handler(req, res) {
     const histData = await histRes.json();
     const parentMsg = histData.messages?.[0];
     console.log('Parent message:', parentMsg?.text?.slice(0, 200));
-    const match = parentMsg?.text?.match(/browse\/(CBR-\d+)/);
+    const match = parentMsg?.text?.match(/browse\/((CBR|HER)-\d+)/);
     if (match) ticketKey = match[1];
   } catch (e) {
     console.warn('Failed to fetch parent message:', e.message);
