@@ -38,13 +38,11 @@ export default async function handler(req, res) {
   // Fetch comment by ID to get text and created timestamp
   let commentText    = '';
   let commentCreated = null;
-  let commentAdf     = null;
   if (commentId) {
     try {
       const cRes  = await fetch(`${JIRA_BASE}/rest/api/3/issue/${ticketKey}/comment/${commentId}`, { headers });
       const cData = await cRes.json();
       commentCreated = cData.created;
-      commentAdf     = cData.body;
       commentText    = extractText(cData.body);
       if (commentText.startsWith('[via Slack]')) return res.status(200).json({ ok: true, skipped: 'slack-sourced' });
     } catch (e) {
@@ -53,7 +51,7 @@ export default async function handler(req, res) {
   }
 
   // Find attachments on the issue created around the same time as this comment
-  const attachmentsToSync = await findCommentAttachments(JIRA_BASE, ticketKey, commentCreated, commentAdf, headers);
+  const attachmentsToSync = await findCommentAttachments(JIRA_BASE, ticketKey, commentCreated, headers);
 
   // Look up Slack IDs for commenter and reporter
   let commenterTag = commenter || 'Someone';
@@ -102,23 +100,17 @@ function extractText(node) {
   return (node.content || []).map(extractText).join('');
 }
 
-function findMediaIds(node, ids = []) {
-  if (!node) return ids;
-  if (node.type === 'media' && node.attrs?.id) ids.push(node.attrs.id);
-  (node.content || []).forEach(c => findMediaIds(c, ids));
-  return ids;
-}
 
-async function findCommentAttachments(jiraBase, ticketKey, commentCreated, commentAdf, headers) {
+async function findCommentAttachments(jiraBase, ticketKey, commentCreated, headers) {
   if (!commentCreated) return [];
-  const mediaIds = findMediaIds(commentAdf);
-  if (mediaIds.length === 0) return [];
   try {
     const attRes  = await fetch(`${jiraBase}/rest/api/3/issue/${ticketKey}?fields=attachment`, { headers });
     const attData = await attRes.json();
     const allAtts = attData.fields?.attachment || [];
     const commentTime = new Date(commentCreated).getTime();
-    return allAtts.filter(a => Math.abs(new Date(a.created).getTime() - commentTime) < 120000);
+    const recent = allAtts.filter(a => Math.abs(new Date(a.created).getTime() - commentTime) < 120000);
+    console.log('Attachments on ticket:', allAtts.length, 'recent:', recent.length);
+    return recent;
   } catch (e) {
     console.warn('Attachment list fetch failed:', e.message);
     return [];
