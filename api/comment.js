@@ -44,7 +44,7 @@ export default async function handler(req, res) {
       const cData = await cRes.json();
       commentCreated = cData.created;
       commentText    = extractText(cData.body);
-      if (commentText.startsWith('[via Slack]')) return res.status(200).json({ ok: true, skipped: 'slack-sourced' });
+      if (commentText.startsWith('[via Slack]') || commentText.includes('(via Slack)')) return res.status(200).json({ ok: true, skipped: 'slack-sourced' });
     } catch (e) {
       console.warn('Comment fetch failed:', e.message);
     }
