@@ -24,7 +24,7 @@ export default async function handler(req, res) {
 
   // Build the Slack thread URL to find the matching Jira ticket
   const tsCompact = event.thread_ts.replace('.', '');
-  const jql       = `project = CBR AND cf[11967] ~ "${tsCompact}"`;
+  const jql       = `project = CBR AND "Slack Thread Link" ~ "${tsCompact}"`;
 
   const searchRes  = await fetch(`${JIRA_BASE}/rest/api/3/issue/search?jql=${encodeURIComponent(jql)}&fields=summary&maxResults=1`, { headers });
   const searchData = await searchRes.json();
