@@ -5,6 +5,7 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
+  console.log('comment.js body:', JSON.stringify(req.body));
   const { ticketKey, comment, author, authorEmail } = req.body;
   if (!ticketKey) return res.status(400).json({ error: 'ticketKey required' });
   const commentText = typeof comment === 'string' ? comment : JSON.stringify(comment);
