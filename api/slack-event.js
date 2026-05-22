@@ -44,23 +44,37 @@ export default async function handler(req, res) {
 
   console.log('Found ticket:', ticketKey);
 
-  // Get the Slack user's name
-  let authorName = 'Someone';
+  // Get the Slack user's email and look up their Jira account ID
+  let authorName      = 'Someone';
+  let authorAccountId = null;
   try {
     const userRes  = await fetch(`https://slack.com/api/users.info?user=${event.user}`, {
       headers: { 'Authorization': `Bearer ${SLACK_BOT_TOKEN}` }
     });
     const userData = await userRes.json();
-    if (userData.ok) authorName = userData.user.real_name || userData.user.name;
+    if (userData.ok) {
+      authorName = userData.user.real_name || userData.user.name;
+      const email = userData.user.profile?.email;
+      if (email) {
+        const jiraUserRes  = await fetch(`${JIRA_BASE}/rest/api/3/user/search?query=${encodeURIComponent(email)}`, { headers });
+        const jiraUsers    = await jiraUserRes.json();
+        const match        = jiraUsers.find(u => u.emailAddress?.toLowerCase() === email.toLowerCase());
+        if (match?.accountId) authorAccountId = match.accountId;
+      }
+    }
   } catch (e) {
-    console.warn('Slack user lookup failed:', e.message);
+    console.warn('User lookup failed:', e.message);
   }
 
-  // Post as Jira comment — prefix marks it as from Slack so comment.js skips re-posting
+  // Build ADF comment with @mention if we have the account ID
+  const authorContent = authorAccountId
+    ? [{ type: 'mention', attrs: { id: authorAccountId, text: `@${authorName}` } }, { type: 'text', text: ' (via Slack):' }]
+    : [{ type: 'text', text: `[via Slack] ${authorName}:`, marks: [{ type: 'strong' }] }];
+
   const commentBody = {
     type: 'doc', version: 1,
     content: [
-      { type: 'paragraph', content: [{ type: 'text', text: `[via Slack] ${authorName}:`, marks: [{ type: 'strong' }] }] },
+      { type: 'paragraph', content: authorContent },
       { type: 'paragraph', content: [{ type: 'text', text: event.text }] }
     ]
   };
