@@ -129,7 +129,8 @@ async function lookupSlackTag(email, token) {
 }
 
 async function uploadFileToSlack(fileBuffer, filename, mimeType, channel, thread_ts, token) {
-  const length = fileBuffer.byteLength;
+  const buf    = Buffer.from(fileBuffer);
+  const length = buf.length;
   const urlRes = await fetch('https://slack.com/api/files.getUploadURLExternal', {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -137,17 +138,19 @@ async function uploadFileToSlack(fileBuffer, filename, mimeType, channel, thread
   });
   const urlData = await urlRes.json();
   if (!urlData.ok) throw new Error(`getUploadURLExternal: ${urlData.error}`);
-  await fetch(urlData.upload_url, {
-    method: 'POST',
-    headers: { 'Content-Type': mimeType || 'application/octet-stream' },
-    body: fileBuffer
-  });
+
+  const form = new FormData();
+  form.append('filename', new Blob([buf], { type: mimeType || 'application/octet-stream' }), filename);
+  const uploadRes = await fetch(urlData.upload_url, { method: 'POST', body: form });
+  console.log('CDN upload status:', uploadRes.status);
+
   const completeRes = await fetch('https://slack.com/api/files.completeUploadExternal', {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ files: [{ id: urlData.file_id }], channel_id: channel, thread_ts })
   });
   const completeData = await completeRes.json();
+  console.log('completeUploadExternal:', completeData.ok, completeData.error || '');
   if (!completeData.ok) throw new Error(`completeUploadExternal: ${completeData.error}`);
   return urlData.file_id;
 }
