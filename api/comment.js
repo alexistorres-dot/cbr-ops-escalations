@@ -38,11 +38,13 @@ export default async function handler(req, res) {
   // Fetch comment by ID to get text and created timestamp
   let commentText    = '';
   let commentCreated = null;
+  let commentBody    = null;
   if (commentId) {
     try {
       const cRes  = await fetch(`${JIRA_BASE}/rest/api/3/issue/${ticketKey}/comment/${commentId}`, { headers });
       const cData = await cRes.json();
       commentCreated = cData.created;
+      commentBody    = cData.body;
       commentText    = extractText(cData.body);
       if (commentText.startsWith('[via Slack]') || commentText.includes('(via Slack)')) return res.status(200).json({ ok: true, skipped: 'slack-sourced' });
     } catch (e) {
@@ -51,7 +53,7 @@ export default async function handler(req, res) {
   }
 
   // Find attachments on the issue created around the same time as this comment
-  const attachmentsToSync = await findCommentAttachments(JIRA_BASE, ticketKey, commentCreated, headers);
+  const attachmentsToSync = await findCommentAttachments(JIRA_BASE, ticketKey, commentCreated, commentBody, headers);
 
   // Look up Slack IDs for commenter and reporter
   let commenterTag = commenter || 'Someone';
@@ -101,20 +103,27 @@ function extractText(node) {
 }
 
 
-async function findCommentAttachments(jiraBase, ticketKey, commentCreated, headers) {
+async function findCommentAttachments(jiraBase, ticketKey, commentCreated, commentBody, headers) {
   if (!commentCreated) return [];
+  if (!hasMediaNode(commentBody)) return [];
   try {
     const attRes  = await fetch(`${jiraBase}/rest/api/3/issue/${ticketKey}?fields=attachment`, { headers });
     const attData = await attRes.json();
     const allAtts = attData.fields?.attachment || [];
     const commentTime = new Date(commentCreated).getTime();
-    const recent = allAtts.filter(a => Math.abs(new Date(a.created).getTime() - commentTime) < 120000);
+    const recent = allAtts.filter(a => Math.abs(new Date(a.created).getTime() - commentTime) < 15000);
     console.log('Attachments on ticket:', allAtts.length, 'recent:', recent.length);
     return recent;
   } catch (e) {
     console.warn('Attachment list fetch failed:', e.message);
     return [];
   }
+}
+
+function hasMediaNode(node) {
+  if (!node) return false;
+  if (['media', 'mediaGroup', 'mediaSingle'].includes(node.type)) return true;
+  return (node.content || []).some(hasMediaNode);
 }
 
 async function lookupSlackTag(email, token) {
